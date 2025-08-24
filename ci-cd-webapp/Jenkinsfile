@@ -1,0 +1,54 @@
+pipeline {
+  agent any
+  environment {
+    IMAGE_NAME     = "webapp-cicd"
+    IMAGE_TAG      = "v${env.BUILD_NUMBER}"
+    FULL_IMAGE     = "${IMAGE_NAME}:${IMAGE_TAG}"
+    LATEST_IMAGE   = "${IMAGE_NAME}:latest"
+    CONTAINER_NAME = "webapp_cicd"
+    HOST_PORT      = "8000"
+    PROBE_URL      = "http://localhost:8000/healthz"
+  }
+  options { ansiColor('xterm'); timestamps() }
+
+  stages {
+    stage('Checkout') {
+      steps { checkout scm }
+    }
+
+    stage('Unit Tests (venv)') {
+      steps {
+        bat """
+        if not exist .venv (python -m venv .venv)
+        call .venv\\Scripts\\activate
+        pip install -r requirements.txt
+        pytest -q
+        """
+      }
+    }
+
+    stage('Docker Build') {
+      steps {
+        bat "docker build -t %FULL_IMAGE% -t %LATEST_IMAGE% ."
+      }
+    }
+
+    stage('Deploy (Local)') {
+      steps {
+        bat """
+        docker rm -f %CONTAINER_NAME% 2>nul || ver > nul
+        docker run -d --name %CONTAINER_NAME% -p %HOST_PORT%:8000 %LATEST_IMAGE%
+        """
+        // quick health probe using PowerShell from Jenkins
+        bat """
+        powershell -Command "$ProgressPreference='SilentlyContinue'; for($i=0;$i -lt 20;$i++){ try{ if((Invoke-WebRequest -UseBasicParsing %PROBE_URL%).StatusCode -eq 200){ exit 0 } } catch{} Start-Sleep -s 1 }; exit 1"
+        """
+      }
+    }
+  }
+
+  post {
+    success { echo "Deployed: http://localhost:%HOST_PORT%" }
+    failure { echo "Pipeline failed. Check Console Output." }
+  }
+}
