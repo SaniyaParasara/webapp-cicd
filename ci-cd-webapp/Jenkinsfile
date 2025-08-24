@@ -10,7 +10,7 @@ pipeline {
     PROBE_URL      = "http://localhost:8000/healthz"
   }
 
-  options { timestamps() }  // remove ansiColor to avoid plugin error
+  options { timestamps() }
 
   stages {
     stage('Checkout') {
@@ -29,6 +29,16 @@ pipeline {
       }
     }
 
+    stage('Linting') {
+      steps {
+        bat """
+        call .venv\\Scripts\\activate
+        pip install flake8
+        flake8 --max-line-length=120 .
+        """
+      }
+    }
+
     stage('Docker Build') {
       steps {
         bat "docker build -t %FULL_IMAGE% -t %LATEST_IMAGE% ."
@@ -41,7 +51,6 @@ pipeline {
         docker rm -f %CONTAINER_NAME% 2>nul || ver > nul
         docker run -d --name %CONTAINER_NAME% -p %HOST_PORT%:8000 %LATEST_IMAGE%
         """
-        // Health probe via PowerShell
         bat """
         powershell -Command "$ProgressPreference='SilentlyContinue'; for($i=0;$i -lt 20;$i++){ try{ if((Invoke-WebRequest -UseBasicParsing '%PROBE_URL%').StatusCode -eq 200){ exit 0 } } catch{} Start-Sleep -s 1 }; exit 1"
         """
@@ -50,7 +59,11 @@ pipeline {
   }
 
   post {
-    success { echo "Deployed: http://localhost:%HOST_PORT%" }
-    failure { echo "Pipeline failed. Check Console Output." }
+    always {
+      bat "docker image prune -f"
+      bat "docker container prune -f"
+    }
+    success { echo "✅ Deployed: http://localhost:%HOST_PORT%" }
+    failure { echo "❌ Pipeline failed. Check Console Output." }
   }
 }
